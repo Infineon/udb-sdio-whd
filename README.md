@@ -50,7 +50,7 @@ To use this library, the following must be true:
 
 ### More information
 
-* [API Reference Guide](https://cypresssemiconductorco.github.io/retarget-io/html/index.html)
+* [API Reference Guide](https://cypresssemiconductorco.github.io/udb-sdio-whd/html/index.html)
 * [Cypress Semiconductor](http://www.cypress.com)
 * [Cypress Semiconductor GitHub](https://github.com/cypresssemiconductorco)
 * [ModusToolbox](https://www.cypress.com/products/modustoolbox-software-environment)
