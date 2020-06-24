@@ -2,9 +2,9 @@
 
 ### Overview
 
-This library provides a UDB based SDIO interface that allows for communicating between a PSoC 6 and a Cypress wireless device such as the CYW4343W, CYW43438, or CYW43012. This library allows PSoC 6 devices that do not have a dedicated SDHC hardware block, but do have UDBs, to work with the [Wi-Fi Host Driver (WHD)](https://github.com/cypresssemiconductorco/wifi-host-driver) library.
+This library provides a UDB based SDIO interface that allows for communicating between a PSoC 6 and a wireless device such as the CYW4343W, CYW43438, or CYW43012. This library allows PSoC 6 devices that do not have a dedicated SDHC hardware block, but do have UDBs, to work with the [Wi-Fi Host Driver (WHD)](https://github.com/cypresssemiconductorco/wifi-host-driver) library.
 
-**NOTE:** This library does not provide a complete SDIO implementation. It is only intended for use with a Cypress wireless device.
+**NOTE:** This library does not provide a complete SDIO implementation. It is only intended for use with a wireless device.
 
 **NOTE:** This library is only compatible with PSoC 6 Board Support Packages (BSPs) version 1.2.0 and later. Prior to this version, portions of this library were directly included as part of the BSP.
 
@@ -28,7 +28,7 @@ There are three configurations of this library to choose from based on what PSoC
 * For Port 12: ```COMPONENTS+=UDB_SDIO_P12```
 
 2. Update the application or BSP makefile to indicate that Wi-Fi is supported
-```COMPONENTS+=CYBSP_WIFI_CAPABLE```
+```DEFINES+=CYBSP_WIFI_CAPABLE```
 
 3. Add the WHD and associated wireless libraries to the application
 
@@ -51,7 +51,7 @@ To use this library, the following must be true:
 ### More information
 
 * [API Reference Guide](https://cypresssemiconductorco.github.io/udb-sdio-whd/html/index.html)
-* [Cypress Semiconductor](http://www.cypress.com)
+* [Cypress Semiconductor, an Infineon Technologies Company](http://www.cypress.com)
 * [Cypress Semiconductor GitHub](https://github.com/cypresssemiconductorco)
 * [ModusToolbox](https://www.cypress.com/products/modustoolbox-software-environment)
 * [Wi-Fi Host Driver](https://github.com/cypresssemiconductorco/wifi-host-driver)

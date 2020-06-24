@@ -1,5 +1,5 @@
 # UDB SDIO for WHD Release Notes
-This library provides a UDB based SDIO interface that allows for communicating between a PSoC 6 and a Cypress wireless device such as the CYW4343W, CYW43438, or CYW43012.
+This library provides a UDB based SDIO interface that allows for communicating between a PSoC 6 and a wireless device such as the CYW4343W, CYW43438, or CYW43012.
 
 ### What's Included?
 * UDB based SDIO interface for WHD using Port 2
@@ -7,7 +7,10 @@ This library provides a UDB based SDIO interface that allows for communicating b
 * UDB based SDIO interface for WHD using Port 12
 
 ### What Changed?
-This is the first release of this library. See [README.md](README.md) for details on how to use this library.
+#### v1.0.1
+* Minor update for documentation & branding
+#### v1.0.0
+* Initial release
 
 ### Supported Software and Tools
 This version of the UDB SDIO interface for WHD was validated for compatibility with the following Software and Tools:
@@ -22,7 +25,7 @@ This version of the UDB SDIO interface for WHD was validated for compatibility w
 ### More information
 
 * [API Reference Guide](https://cypresssemiconductorco.github.io/udb-sdio-whd/html/index.html)
-* [Cypress Semiconductor](http://www.cypress.com)
+* [Cypress Semiconductor, an Infineon Technologies Company](http://www.cypress.com)
 * [Cypress Semiconductor GitHub](https://github.com/cypresssemiconductorco)
 * [ModusToolbox](https://www.cypress.com/products/modustoolbox-software-environment)
 * [PSoC 6 Code Examples using ModusToolbox IDE](https://github.com/cypresssemiconductorco/Code-Examples-for-ModusToolbox-Software)

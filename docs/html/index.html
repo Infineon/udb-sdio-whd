@@ -29,7 +29,7 @@
 <table cellspacing="0" cellpadding="0">
  <tbody>
  <tr style="height: 56px;">
-  <td id="projectlogo"><a href="http://www.cypress.com/"><img alt="Logo" src="cypress_logo.png"/></a></td>
+  <td id="projectlogo"><a href="http://www.cypress.com/"><img alt="Logo" src="logo.png"/></a></td>
   <td id="projectalign" style="padding-left: 0.5em;">
    <div id="projectname">UDB SDIO for Wi-Fi Host Driver (udb-sdio-whd)</div>
   </td>
@@ -91,8 +91,8 @@ $(document).ready(function(){initNavTree('index.html','');});
 </div><!--header-->
 <div class="contents">
 <div class="textblock"><h3>Overview</h3>
-<p>This library provides a UDB based SDIO interface that allows for communicating between a PSoC 6 and a Cypress wireless device such as the CYW4343W, CYW43438, or CYW43012. This library allows PSoC 6 devices that do not have a dedicated SDHC hardware block, but do have UDBs, to work with the <a href="https://github.com/cypresssemiconductorco/wifi-host-driver">Wi-Fi Host Driver (WHD)</a> library.</p>
-<p><b>NOTE:</b> This library does not provide a complete SDIO implementation. It is only intended for use with a Cypress wireless device.</p>
+<p>This library provides a UDB based SDIO interface that allows for communicating between a PSoC 6 and a wireless device such as the CYW4343W, CYW43438, or CYW43012. This library allows PSoC 6 devices that do not have a dedicated SDHC hardware block, but do have UDBs, to work with the <a href="https://github.com/cypresssemiconductorco/wifi-host-driver">Wi-Fi Host Driver (WHD)</a> library.</p>
+<p><b>NOTE:</b> This library does not provide a complete SDIO implementation. It is only intended for use with a wireless device.</p>
 <p><b>NOTE:</b> This library is only compatible with PSoC 6 Board Support Packages (BSPs) version 1.2.0 and later. Prior to this version, portions of this library were directly included as part of the BSP.</p>
 <h3>Whats included</h3>
 <p>There are three configurations of this library to choose from based on what PSoC 6 pins are intended for SDIO communication. Selection of which port to use is done by specifying the appropriate component to the makefile. Details for this are described in the Quick Start section below. The table below shows the supported ports and which pins on that port map to which SDIO function.</p>
@@ -122,7 +122,7 @@ $(document).ready(function(){initNavTree('index.html','');});
 <li>For Port 12: <code>COMPONENTS+=UDB_SDIO_P12</code></li>
 </ul>
 <ol type="1">
-<li>Update the application or BSP makefile to indicate that Wi-Fi is supported <code>COMPONENTS+=CYBSP_WIFI_CAPABLE</code></li>
+<li>Update the application or BSP makefile to indicate that Wi-Fi is supported <code>DEFINES+=CYBSP_WIFI_CAPABLE</code></li>
 <li>Add the WHD and associated wireless libraries to the application</li>
 <li>Refer to the WHD documentation for setting up the networking interface</li>
 </ol>
@@ -142,8 +142,8 @@ $(document).ready(function(){initNavTree('index.html','');});
 <p><b>NOTE:</b> The optimal configuration is to have ClkSlow and ClkPeri running at 100 MHz and for the SDIO to run at 25 MHz.</p>
 <h3>More information</h3>
 <ul>
-<li><a href="https://cypresssemiconductorco.github.io/retarget-io/html/index.html">API Reference Guide</a></li>
-<li><a href="http://www.cypress.com">Cypress Semiconductor</a></li>
+<li><a href="https://cypresssemiconductorco.github.io/udb-sdio-whd/html/index.html">API Reference Guide</a></li>
+<li><a href="http://www.cypress.com">Cypress Semiconductor, an Infineon Technologies Company</a></li>
 <li><a href="https://github.com/cypresssemiconductorco">Cypress Semiconductor GitHub</a></li>
 <li><a href="https://www.cypress.com/products/modustoolbox-software-environment">ModusToolbox</a></li>
 <li><a href="https://github.com/cypresssemiconductorco/wifi-host-driver">Wi-Fi Host Driver</a></li>

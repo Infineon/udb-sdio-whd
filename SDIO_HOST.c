@@ -31,7 +31,7 @@
 extern "C" {
 #endif
 
-#ifdef CY_RTOS_AWARE
+#if defined(CY_RTOS_AWARE) || defined(COMPONENT_RTOS_AWARE)
 
     #include "cyabs_rtos.h"
 
@@ -653,7 +653,7 @@ en_sdio_result_t SDIO_SendCommandAndWait(stc_sdio_cmd_t *pstcCmd)
     stcCmdConfig.u8CmdIndex = (uint8_t)pstcCmd->u32CmdIdx;
     stcCmdConfig.u32Argument =  pstcCmd->u32Arg;
 
-#ifdef CY_RTOS_AWARE
+#if defined(CY_RTOS_AWARE) || defined(COMPONENT_RTOS_AWARE)
 
     cy_rslt_t result;
 
@@ -770,7 +770,7 @@ en_sdio_result_t SDIO_SendCommandAndWait(stc_sdio_cmd_t *pstcCmd)
                             SDIO_CONTROL_REG |= SDIO_CTRL_ENABLE_WRITE;
                         }
 
-                    #ifdef CY_RTOS_AWARE
+                    #if defined(CY_RTOS_AWARE) || defined(COMPONENT_RTOS_AWARE)
                         /* Wait for the transfer to finish.
                         *  Acquire semaphore and wait until it will be released
                         *  in SDIO_IRQ:
@@ -822,7 +822,7 @@ en_sdio_result_t SDIO_SendCommandAndWait(stc_sdio_cmd_t *pstcCmd)
         } /*No Response Required, thus no CMD53*/
     } /*CMD Passed*/
 
-#ifndef CY_RTOS_AWARE
+#if !defined(CY_RTOS_AWARE) && !defined(COMPONENT_RTOS_AWARE)
     u32Timeout = 0;
 #endif
 
@@ -1287,7 +1287,7 @@ void SDIO_IRQ(void)
 
         /* Set the done flag */
 
-    #ifdef CY_RTOS_AWARE
+    #if defined(CY_RTOS_AWARE) || defined(COMPONENT_RTOS_AWARE)
         cy_rtos_set_semaphore( &sdio_transfer_finished_semaphore, true );
     #else
         gstcInternalData.stcEvents.u8TransComplete++;
@@ -1307,7 +1307,7 @@ void SDIO_IRQ(void)
             gstcInternalData.stcEvents.u8CRCError++;
         }
         /* Okay we're done so set the done flag */
-    #ifdef CY_RTOS_AWARE
+    #if defined(CY_RTOS_AWARE) || defined(COMPONENT_RTOS_AWARE)
         cy_rtos_set_semaphore( &sdio_transfer_finished_semaphore, true );
     #else
         gstcInternalData.stcEvents.u8TransComplete++;
@@ -1466,7 +1466,7 @@ void SDIO_WRITE_DMA_IRQ(void)
 *******************************************************************************/
 void SDIO_Free(void)
 {
-#ifdef CY_RTOS_AWARE
+#if defined(CY_RTOS_AWARE) || defined(COMPONENT_RTOS_AWARE)
     cy_rtos_deinit_semaphore(&sdio_transfer_finished_semaphore);
 #endif
 }

@@ -25,13 +25,13 @@ var NAVTREE =
 [
   [ "UDB SDIO for Wi-Fi Host Driver (udb-sdio-whd)", "index.html", [
     [ "UDB SDIO for Wi-Fi Host Driver", "index.html", null ],
-    [ "API Reference", "@ref group_board_libs", null ]
+    [ "API Reference", "modules.html", "modules" ]
   ] ]
 ];
 
 var NAVTREEINDEX =
 [
-"@ref group_board_libs"
+"group__group__bsp__functions.html"
 ];
 
 var SYNCONMSG = 'click to disable panel synchronisation';

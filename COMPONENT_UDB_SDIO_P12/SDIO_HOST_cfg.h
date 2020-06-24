@@ -1,5 +1,5 @@
 /***************************************************************************//**
-* \file SDIO_HOST_cfg.h
+* \file COMPONENT_UDB_SDIO_P12/SDIO_HOST_cfg.h
 *
 * \brief
 *  This file provides the configuration of the UDB based SDIO driver.
