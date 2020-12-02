@@ -39,8 +39,9 @@ There are three configurations of this library to choose from based on what PSoC
 To use this library, the following must be true:
 1. ClkSlow & ClkPeri must both run at the same speed
 2. ClkSlow & ClkPeri must run at 4x the desired SDIO speed
-3. The first 8-bit peripheral clock divider must be reserved for use by this driver
-4. The following DMA channels must be reserved for use by this driver
+3. The SDIO clock must run at between 20-25MHz
+4. The first 8-bit peripheral clock divider must be reserved for use by this driver
+5. The following DMA channels must be reserved for use by this driver
 * DataWire 0 channel 0
 * DataWire 0 channel 1
 * DataWire 1 channel 1

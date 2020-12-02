@@ -7,6 +7,9 @@ This library provides a UDB based SDIO interface that allows for communicating b
 * UDB based SDIO interface for WHD using Port 12
 
 ### What Changed?
+#### v1.1.0
+* Fixed bug where driver could try to send data while bus was still busy
+* Minor code style cleanups
 #### v1.0.1
 * Minor update for documentation & branding
 #### v1.0.0
@@ -17,10 +20,12 @@ This version of the UDB SDIO interface for WHD was validated for compatibility w
 
 | Software and Tools                        | Version |
 | :---                                      | :----:  |
-| ModusToolbox Software Environment         | 2.0     |
-| GCC Compiler                              | 7.4     |
-| IAR Compiler                              | 8.32    |
+| ModusToolbox Software Environment         | 2.1     |
+| GCC Compiler                              | 9.2     |
+| IAR Compiler                              | 8.4     |
 | ARM Compiler 6                            | 6.11    |
+
+Minimum required ModusToolbox Software Environment: v2.0
 
 ### More information
 
