@@ -13,12 +13,12 @@ There are three configurations of this library to choose from based on what PSoC
 
 | SDIO Function | Port 2 | Port 9 | Port 12 |
 | ------------- | ------ | ------ | ------- |
-| SDIO_D0       | P2_0   | P9_0   | P12_0   |
-| SDIO_D1       | P2_1   | P9_1   | P12_1   |
-| SDIO_D2       | P2_2   | P9_2   | P12_2   |
-| SDIO_D3       | P2_3   | P9_3   | P12_3   |
-| SDIO_CMD      | P2_4   | P9_4   | P12_4   |
-| SDIO_CLK      | P2_5   | P9_5   | P12_5   |
+| SDIO_D0       | P2_0   | P9_0   | P12_1   |
+| SDIO_D1       | P2_1   | P9_1   | P12_2   |
+| SDIO_D2       | P2_2   | P9_2   | P12_3   |
+| SDIO_D3       | P2_3   | P9_3   | P12_4   |
+| SDIO_CMD      | P2_4   | P9_4   | P12_5   |
+| SDIO_CLK      | P2_5   | P9_5   | P12_0   |
 
 
 ### Quick Start

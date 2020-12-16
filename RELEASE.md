@@ -7,6 +7,8 @@ This library provides a UDB based SDIO interface that allows for communicating b
 * UDB based SDIO interface for WHD using Port 12
 
 ### What Changed?
+#### v1.1.1
+* Fixed potential issue with Port 12 handling of data bus busy
 #### v1.1.0
 * Fixed bug where driver could try to send data while bus was still busy
 * Minor code style cleanups
