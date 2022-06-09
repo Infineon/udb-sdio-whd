@@ -25,7 +25,6 @@
 #include "SDIO_HOST.h"
 #include "cy_utils.h"
 #include "cy_gpio.h"
-#include "cybsp.h"
 
 #if defined(CYHAL_UDB_SDIO)
 
