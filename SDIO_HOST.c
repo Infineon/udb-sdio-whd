@@ -6,7 +6,9 @@
  *
  ***************************************************************************************************
  * \copyright
- * Copyright 2016-2020 Cypress Semiconductor Corporation
+ * Copyright 2016-2022 Cypress Semiconductor Corporation (an Infineon company) or
+ * an affiliate of Cypress Semiconductor Corporation
+ *
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -26,6 +28,10 @@
 #include "cy_utils.h"
 #include "cy_gpio.h"
 #include "cybsp.h"
+#include "cyhal.h"
+#if defined(_CYHAL_DRIVER_AVAILABLE_IRQ) && (_CYHAL_DRIVER_AVAILABLE_IRQ)
+#include "cyhal_irq_impl.h"
+#endif /* defined(_CYHAL_DRIVER_AVAILABLE_IRQ) && (_CYHAL_DRIVER_AVAILABLE_IRQ) */
 
 #if defined(CYHAL_UDB_SDIO)
 
@@ -35,11 +41,11 @@ extern "C" {
 
 #if defined(CY_RTOS_AWARE) || defined(COMPONENT_RTOS_AWARE)
 
-    #include "cyabs_rtos.h"
+#include "cyabs_rtos.h"
 
-    #define NEVER_TIMEOUT ( (uint32_t)0xffffffffUL )
-static cy_semaphore_t sdio_transfer_finished_semaphore;
-static bool           sema_initialized = false;
+#define NEVER_TIMEOUT ( (uint32_t)0xffffffffUL )
+static cy_semaphore_t _udb_sdio_transfer_finished_semaphore;
+static bool           _udb_sdio_sema_initialized = false;
 #endif
 
 // Backup struct used to store and restore non retention UDB registers
@@ -53,43 +59,146 @@ typedef struct
 
 // Globals Needed for DMA
 // DMA channel structures
-cy_stc_dma_channel_config_t respChannelConfig;
-cy_stc_dma_channel_config_t cmdChannelConfig;
-cy_stc_dma_channel_config_t writeChannelConfig;
-cy_stc_dma_channel_config_t readChannelConfig;
+static cy_stc_dma_channel_config_t _udb_sdio_channel_config_resp;
+static cy_stc_dma_channel_config_t _udb_sdio_channel_config_cmd;
+static cy_stc_dma_channel_config_t _udb_sdio_channel_config_write;
+static cy_stc_dma_channel_config_t _udb_sdio_channel_config_read;
 
 // DMA Descriptor structures
-cy_stc_dma_descriptor_t respDesr;
-cy_stc_dma_descriptor_t cmdDesr;
-cy_stc_dma_descriptor_t readDesr0;
-cy_stc_dma_descriptor_t readDesr1;
-cy_stc_dma_descriptor_t writeDesr0;
-cy_stc_dma_descriptor_t writeDesr1;
+static cy_stc_dma_descriptor_t _udb_sdio_desr_resp;
+static cy_stc_dma_descriptor_t _udb_sdio_desr_cmd;
+static cy_stc_dma_descriptor_t _udb_sdio_desr_read0;
+static cy_stc_dma_descriptor_t _udb_sdio_desr_read1;
+static cy_stc_dma_descriptor_t _udb_sdio_desr_write0;
+static cy_stc_dma_descriptor_t _udb_sdio_desr_write1;
 
 // Global structure used for data keeping
-stc_sdio_gInternalData_t gstcInternalData;
+static stc_sdio_gInternalData_t _udb_sdio_gstc_internal_data;
 
 // Global CRC table
-static uint8_t crcTable[256];
+static uint8_t _udb_sdio_crc_table[256];
 
 // Global values used for DMA interrupt
-static uint32_t yCountRemainder;
-static uint32_t yCounts;
+static uint32_t _udb_sdio_y_count_remainder;
+static uint32_t _udb_sdio_y_counts;
 
 // Global value for card interrupt
-static uint8_t pfnCardInt_count = 0;
+static uint8_t _udb_sdio_pfn_card_int_count = 0;
 
 // Global structure to store UDB registers
-static stc_sdio_backup_regs_t regs;
+static stc_sdio_backup_regs_t _udb_sdio_regs;
 
-static uint32_t udb_initialized = 0;
+static uint32_t _udb_sdio_udb_initialized = 0;
 
-cy_stc_syspm_callback_params_t sdio_pm_callback_params;
-cy_stc_syspm_callback_t        sdio_pm_callback_handler;
+#define DMA_INSTANCES   (4u)
+#if (CYHAL_API_VERSION >= 2)
+static cyhal_clock_t _udb_sdio_rsc_clk = { CYHAL_CLOCK_BLOCK_PERIPHERAL_8BIT, 0, false, NULL };
+#else
+static cyhal_resource_inst_t _udb_sdio_rsc_inst_clk =
+    { CYHAL_RSC_CLOCK, CYHAL_CLOCK_BLOCK_PERIPHERAL_8BIT, 0 };
+static bool _udb_sdio_reserved_clock = false;
+#endif
+static const cyhal_resource_inst_t _udb_sdio_rec_dmas[DMA_INSTANCES] =
+{
+    { CYHAL_RSC_DW, 0, 0 },
+    { CYHAL_RSC_DW, 0, 1 },
+    { CYHAL_RSC_DW, 1, 1 },
+    { CYHAL_RSC_DW, 1, 3 },
+};
+static uint8_t _udb_sdio_reserved_dmas = 0;
 
 // Deep Sleep Mode API Support
 static void SDIO_SaveConfig(void);
 static void SDIO_RestoreConfig(void);
+
+/***************************************************************************************************
+ * Function Name: SDIO_ReserveResources
+ ***********************************************************************************************//**
+ *
+ * Allows reserving some of the internal resources that be allocated to other purposes in the
+ * application. This includes Clocks and DMA instances. Calling this is purely optional. If not
+ * called, the resources will be reserved by SDIO_Init. If called, SDIO_Init will bypass the
+ * reservations to avoid doing it multiple times.
+ *
+ * \return
+ * CY_RSLT_SUCCESS if the reservation was successful, else an error for what went wrong
+ *
+ **************************************************************************************************/
+cy_rslt_t SDIO_ReserveResources()
+{
+    cy_rslt_t ret = CY_RSLT_SUCCESS;
+    #if (CYHAL_API_VERSION >= 2)
+    if (!_udb_sdio_rsc_clk.reserved)
+    {
+        ret = cyhal_clock_reserve(&_udb_sdio_rsc_clk, &_udb_sdio_rsc_clk);
+    }
+    #else
+    if (!_udb_sdio_reserved_clock)
+    {
+        ret = cyhal_hwmgr_reserve(&_udb_sdio_rsc_inst_clk);
+        _udb_sdio_reserved_clock = (CY_RSLT_SUCCESS == ret);
+    }
+    cyhal_clock_t _udb_sdio_rsc_clk = { 0, 0, CYHAL_CLOCK_BLOCK_PERIPHERAL_8BIT, 0, true };
+    #endif // if (CYHAL_API_VERSION >= 2)
+    if (CY_RSLT_SUCCESS == ret)
+    {
+        /* Assign clock divider */
+        ret = _cyhal_utils_peri_pclk_set_divider(PCLK_UDB_CLOCKS0, &_udb_sdio_rsc_clk, 0U);
+
+        if (CY_RSLT_SUCCESS == ret)
+        {
+            ret = _cyhal_utils_peri_pclk_enable_divider(PCLK_UDB_CLOCKS0, &_udb_sdio_rsc_clk);
+        }
+
+        if (CY_RSLT_SUCCESS == ret)
+        {
+            ret = _cyhal_utils_peri_pclk_assign_divider(PCLK_UDB_CLOCKS0, &_udb_sdio_rsc_clk);
+        }
+    }
+
+    while (CY_RSLT_SUCCESS == ret && _udb_sdio_reserved_dmas < DMA_INSTANCES)
+    {
+        ret = cyhal_hwmgr_reserve(&_udb_sdio_rec_dmas[_udb_sdio_reserved_dmas]);
+        if (CY_RSLT_SUCCESS == ret)
+        {
+            _udb_sdio_reserved_dmas++;
+        }
+    }
+
+    return ret;
+}
+
+
+/***************************************************************************************************
+ * Function Name: SDIO_FreeResources
+ ***********************************************************************************************//**
+ *
+ * Frees all 'sharable' clock/DMA resources that were allocated by SDIO_ReserveResources. If the
+ * resources were already freed, this will do nothing.
+ *
+ **************************************************************************************************/
+void SDIO_FreeResources()
+{
+    #if (CYHAL_API_VERSION >= 2)
+    if (_udb_sdio_rsc_clk.reserved)
+    {
+        cyhal_clock_free(&_udb_sdio_rsc_clk);
+    }
+    #else
+    if (_udb_sdio_reserved_clock)
+    {
+        cyhal_hwmgr_free(&_udb_sdio_rsc_inst_clk);
+        _udb_sdio_reserved_clock = false;
+    }
+    #endif
+
+    while (_udb_sdio_reserved_dmas > 0)
+    {
+        _udb_sdio_reserved_dmas--;
+        cyhal_hwmgr_free(&_udb_sdio_rec_dmas[_udb_sdio_reserved_dmas]);
+    }
+}
+
 
 /***************************************************************************************************
  * Function Name: SDIO_DeepSleepCallback
@@ -134,6 +243,7 @@ cy_en_syspm_status_t SDIO_DeepSleepCallback(cy_stc_syspm_callback_params_t* para
             break;
 
         default:
+            CY_ASSERT(false);
             break;
     }
 
@@ -156,9 +266,9 @@ cy_en_syspm_status_t SDIO_DeepSleepCallback(cy_stc_syspm_callback_params_t* para
  **************************************************************************************************/
 void SDIO_Init(stc_sdio_irq_cb_t* pfuCb)
 {
-    if (!udb_initialized)
+    if (!_udb_sdio_udb_initialized)
     {
-        udb_initialized = 1;
+        _udb_sdio_udb_initialized = 1;
         SDIO_Host_Config_TriggerMuxes();
         SDIO_Host_Config_UDBs();
     }
@@ -167,7 +277,11 @@ void SDIO_Init(stc_sdio_irq_cb_t* pfuCb)
     SDIO_SetNumBlocks(1);
 
     // Enable SDIO ISR
+    #if defined(_CYHAL_DRIVER_AVAILABLE_IRQ) && (_CYHAL_DRIVER_AVAILABLE_IRQ)
+    _cyhal_irq_enable((_cyhal_system_irq_t)SDIO_HOST_sdio_int__INTC_NUMBER);
+    #else
     NVIC_EnableIRQ((IRQn_Type)SDIO_HOST_sdio_int__INTC_NUMBER);
+    #endif
 
     // Enable the Status Reg to generate an interrupt
     SDIO_STATUS_AUX_CTL |= (0x10);
@@ -185,7 +299,7 @@ void SDIO_Init(stc_sdio_irq_cb_t* pfuCb)
     (*(reg32*)CYREG_PROT_SMPU_MS14_CTL) |= 0x0200;
 
     // Setup callback for card interrupt
-    gstcInternalData.pstcCallBacks.pfnCardIntCb = pfuCb->pfnCardIntCb;
+    _udb_sdio_gstc_internal_data.pstcCallBacks.pfnCardIntCb = pfuCb->pfnCardIntCb;
 
     // Setup the DMA channels
     SDIO_SetupDMA();
@@ -253,11 +367,11 @@ void SDIO_SendCommand(stc_sdio_cmd_config_t* pstcCmdConfig)
         SDIO_CONTROL_REG &= ~SDIO_CTRL_SKIP_RESPONSE;
 
         // Set the destination address
-        respDesr.dst = (uint32_t)(pstcCmdConfig->pu8ResponseBuf);
+        _udb_sdio_desr_resp.dst = (uint32_t)(pstcCmdConfig->pu8ResponseBuf);
 
         // Initialize the channel with the descriptor
         Cy_DMA_Channel_SetDescriptor(SDIO_HOST_Resp_DMA_HW, SDIO_HOST_Resp_DMA_DW_CHANNEL,
-                                     &respDesr);
+                                     &_udb_sdio_desr_resp);
 
         // Enable the channel
         Cy_DMA_Channel_Enable(SDIO_HOST_Resp_DMA_HW, SDIO_HOST_Resp_DMA_DW_CHANNEL);
@@ -270,10 +384,11 @@ void SDIO_SendCommand(stc_sdio_cmd_config_t* pstcCmdConfig)
 
     // Setup the Command DMA
     // Set the source address
-    cmdDesr.src = (uint32_t)(&u8cmdBuf[1]);
+    _udb_sdio_desr_cmd.src = (uint32_t)(&u8cmdBuf[1]);
 
     // Initialize the channel with the descriptor
-    Cy_DMA_Channel_SetDescriptor(SDIO_HOST_CMD_DMA_HW, SDIO_HOST_CMD_DMA_DW_CHANNEL, &cmdDesr);
+    Cy_DMA_Channel_SetDescriptor(SDIO_HOST_CMD_DMA_HW, SDIO_HOST_CMD_DMA_DW_CHANNEL,
+                                 &_udb_sdio_desr_cmd);
 
     // Enable the channel
     Cy_DMA_Channel_Enable(SDIO_HOST_CMD_DMA_HW, SDIO_HOST_CMD_DMA_DW_CHANNEL);
@@ -404,18 +519,22 @@ void SDIO_InitDataTransfer(stc_sdio_data_config_t* pstcDataConfig)
         // Clear any pending interrupts in the DMA
         Cy_DMA_Channel_ClearInterrupt(SDIO_HOST_Read_DMA_HW, SDIO_HOST_Read_DMA_DW_CHANNEL);
 
+        #if defined(_CYHAL_DRIVER_AVAILABLE_IRQ) && (_CYHAL_DRIVER_AVAILABLE_IRQ)
+        _cyhal_irq_clear_pending((_cyhal_system_irq_t)SDIO_HOST_Read_Int_INTC_NUMBER);
+        #else
         NVIC_ClearPendingIRQ((IRQn_Type)SDIO_HOST_Read_Int_INTC_NUMBER);
+        #endif
 
         // setup the destination addresses
-        readDesr0.dst = (uint32_t)(pstcDataConfig->pu8Data);
-        readDesr1.dst = (uint32_t)((pstcDataConfig->pu8Data) + 1024);
+        _udb_sdio_desr_read0.dst = (uint32_t)(pstcDataConfig->pu8Data);
+        _udb_sdio_desr_read1.dst = (uint32_t)((pstcDataConfig->pu8Data) + 1024);
 
         // Setup the X control to transfer two 16 bit elements per transfer for a total of 4 bytes
         // Remember X increment is in terms of data element size which is 16, thus why it is 1
-        readDesr0.xCtl = _VAL2FLD(CY_DMA_CTL_COUNT, 1) |
-                         _VAL2FLD(CY_DMA_CTL_DST_INCR, 1);
-        readDesr1.xCtl = _VAL2FLD(CY_DMA_CTL_COUNT, 1) |
-                         _VAL2FLD(CY_DMA_CTL_DST_INCR, 1);
+        _udb_sdio_desr_read0.xCtl = _VAL2FLD(CY_DMA_CTL_COUNT, 1) |
+                                    _VAL2FLD(CY_DMA_CTL_DST_INCR, 1);
+        _udb_sdio_desr_read1.xCtl = _VAL2FLD(CY_DMA_CTL_COUNT, 1) |
+                                    _VAL2FLD(CY_DMA_CTL_DST_INCR, 1);
 
         // The X Loop will always transfer 4 bytes. The FIFO will only trigger the
         // DMA when it has 4 bytes to send (2 in each F0 and F1). There is a possibility
@@ -440,77 +559,89 @@ void SDIO_InitDataTransfer(stc_sdio_data_config_t* pstcDataConfig)
         {
             // Setup one descriptor
             // Y Increment is 2 because the X is transfer 2 data elements (which are 16 bits)
-            readDesr0.yCtl = _VAL2FLD(CY_DMA_CTL_COUNT, (dataSize - 1) / 4) |
-                             _VAL2FLD(CY_DMA_CTL_DST_INCR, 2);
+            _udb_sdio_desr_read0.yCtl = _VAL2FLD(CY_DMA_CTL_COUNT, (dataSize - 1) / 4) |
+                                        _VAL2FLD(CY_DMA_CTL_DST_INCR, 2);
 
             // Setup descriptor 0 to point to nothing and disable
-            readDesr0.nextPtr = 0;
-            readDesr0.ctl    |= 0x01000000;
+            _udb_sdio_desr_read0.nextPtr = 0;
+            _udb_sdio_desr_read0.ctl    |= 0x01000000;
 
             // Disable Interrupt
+            #if defined(_CYHAL_DRIVER_AVAILABLE_IRQ) && (_CYHAL_DRIVER_AVAILABLE_IRQ)
+            _cyhal_irq_disable((_cyhal_system_irq_t)SDIO_HOST_Read_Int_INTC_NUMBER);
+            #else
             NVIC_DisableIRQ((IRQn_Type)SDIO_HOST_Read_Int_INTC_NUMBER);
+            #endif
         }
         else if (dataSize <= 2048)
         {
             // setup the first descriptor for 1024, then setup 2nd descriptor for remainder
 
-            readDesr0.yCtl = _VAL2FLD(CY_DMA_CTL_COUNT, 255) |
-                             _VAL2FLD(CY_DMA_CTL_DST_INCR, 2);
-            readDesr1.yCtl = _VAL2FLD(CY_DMA_CTL_COUNT, (dataSize - 1025) / 4) |
-                             _VAL2FLD(CY_DMA_CTL_DST_INCR, 2);
+            _udb_sdio_desr_read0.yCtl = _VAL2FLD(CY_DMA_CTL_COUNT, 255) |
+                                        _VAL2FLD(CY_DMA_CTL_DST_INCR, 2);
+            _udb_sdio_desr_read1.yCtl = _VAL2FLD(CY_DMA_CTL_COUNT, (dataSize - 1025) / 4) |
+                                        _VAL2FLD(CY_DMA_CTL_DST_INCR, 2);
 
 
             // Setup descriptor 0 to point to descriptor 1
-            readDesr0.nextPtr = (uint32_t)(&readDesr1);
+            _udb_sdio_desr_read0.nextPtr = (uint32_t)(&_udb_sdio_desr_read1);
             // Setup descriptor 1 to point to nothing and disable
-            readDesr1.nextPtr = 0;
+            _udb_sdio_desr_read1.nextPtr = 0;
 
             // Don't disable after first descriptor
-            readDesr0.ctl &= ~0x01000000;
+            _udb_sdio_desr_read0.ctl &= ~0x01000000;
             // Disable after second descriptor
-            readDesr1.ctl |= 0x01000000;
+            _udb_sdio_desr_read1.ctl |= 0x01000000;
 
             // Disable Interrupt
+            #if defined(_CYHAL_DRIVER_AVAILABLE_IRQ) && (_CYHAL_DRIVER_AVAILABLE_IRQ)
+            _cyhal_irq_disable((_cyhal_system_irq_t)SDIO_HOST_Read_Int_INTC_NUMBER);
+            #else
             NVIC_DisableIRQ((IRQn_Type)SDIO_HOST_Read_Int_INTC_NUMBER);
+            #endif
         }
         else // dataSize must be greater than 2048
         {
             // These are for the ISR, Need to figure out how many "descriptors"
             // need to run, and the yCount for last descriptor.
             // Example: dataSize = 2080
-            // yCounts = 2, yCountRemainder = 7 (send 8 more set of 4)
-            yCounts = (dataSize / 1024);
+            // _udb_sdio_y_counts = 2, _udb_sdio_y_count_remainder = 7 (send 8 more set of 4)
+            _udb_sdio_y_counts = (dataSize / 1024);
 
             // the Ycount register is a +1 register meaning 0 = 1. I However, need to know when
             // there is no remainder so I increase the value to make sure there is a remainder and
             // decrement in the ISR
-            yCountRemainder = (((dataSize - (yCounts * 1024)) + 3) / 4);
+            _udb_sdio_y_count_remainder = (((dataSize - (_udb_sdio_y_counts * 1024)) + 3) / 4);
 
             // Setup the Y Ctrl for both descriptors
-            readDesr0.yCtl = _VAL2FLD(CY_DMA_CTL_COUNT, 255) |
-                             _VAL2FLD(CY_DMA_CTL_DST_INCR, 2);
-            readDesr1.yCtl = _VAL2FLD(CY_DMA_CTL_COUNT, 255) |
-                             _VAL2FLD(CY_DMA_CTL_DST_INCR, 2);
+            _udb_sdio_desr_read0.yCtl = _VAL2FLD(CY_DMA_CTL_COUNT, 255) |
+                                        _VAL2FLD(CY_DMA_CTL_DST_INCR, 2);
+            _udb_sdio_desr_read1.yCtl = _VAL2FLD(CY_DMA_CTL_COUNT, 255) |
+                                        _VAL2FLD(CY_DMA_CTL_DST_INCR, 2);
 
             // Setup descriptor 0 to point to descriptor 1
-            readDesr0.nextPtr = (uint32_t)(&readDesr1);
+            _udb_sdio_desr_read0.nextPtr = (uint32_t)(&_udb_sdio_desr_read1);
             // Setup descriptor 1 to point to descriptor 0
-            readDesr1.nextPtr = (uint32_t)(&readDesr0);
+            _udb_sdio_desr_read1.nextPtr = (uint32_t)(&_udb_sdio_desr_read0);
 
             // Don't disable the channel on completion of descriptor
-            readDesr0.ctl &= ~0x01000000;
-            readDesr1.ctl &= ~0x01000000;
+            _udb_sdio_desr_read0.ctl &= ~0x01000000;
+            _udb_sdio_desr_read1.ctl &= ~0x01000000;
 
-            // Decrement yCounts by 2 since we already have 2 descriptors setup
-            yCounts -= 2;
+            // Decrement _udb_sdio_y_counts by 2 since we already have 2 descriptors setup
+            _udb_sdio_y_counts -= 2;
 
             // Enable DMA interrupt
+            #if defined(_CYHAL_DRIVER_AVAILABLE_IRQ) && (_CYHAL_DRIVER_AVAILABLE_IRQ)
+            _cyhal_irq_enable((_cyhal_system_irq_t)SDIO_HOST_Read_Int_INTC_NUMBER);
+            #else
             NVIC_EnableIRQ((IRQn_Type)SDIO_HOST_Read_Int_INTC_NUMBER);
+            #endif
         }
 
         // Initialize the channel with the first descriptor
         Cy_DMA_Channel_SetDescriptor(SDIO_HOST_Read_DMA_HW, SDIO_HOST_Read_DMA_DW_CHANNEL,
-                                     &readDesr0);
+                                     &_udb_sdio_desr_read0);
 
         // Enable the channel
         Cy_DMA_Channel_Enable(SDIO_HOST_Read_DMA_HW, SDIO_HOST_Read_DMA_DW_CHANNEL);
@@ -527,95 +658,111 @@ void SDIO_InitDataTransfer(stc_sdio_data_config_t* pstcDataConfig)
         // Clear any pending interrupts in the DMA
         Cy_DMA_Channel_ClearInterrupt(SDIO_HOST_Write_DMA_HW, SDIO_HOST_Write_DMA_DW_CHANNEL);
 
+        #if defined(_CYHAL_DRIVER_AVAILABLE_IRQ) && (_CYHAL_DRIVER_AVAILABLE_IRQ)
+        _cyhal_irq_clear_pending((_cyhal_system_irq_t)SDIO_HOST_Write_Int_INTC_NUMBER);
+        #else
         NVIC_ClearPendingIRQ((IRQn_Type)SDIO_HOST_Write_Int_INTC_NUMBER);
+        #endif
 
         // setup the SRC addresses
-        writeDesr0.src = (uint32_t)(pstcDataConfig->pu8Data);
-        writeDesr1.src = (uint32_t)((pstcDataConfig->pu8Data) + 1024);
+        _udb_sdio_desr_write0.src = (uint32_t)(pstcDataConfig->pu8Data);
+        _udb_sdio_desr_write1.src = (uint32_t)((pstcDataConfig->pu8Data) + 1024);
 
 
         // Setup the X control to transfer two 16 bit elements per transfer for a total of 4 bytes
         // Remember X increment is in terms of data element size which is 16, thus why it is 1
-        writeDesr0.xCtl = _VAL2FLD(CY_DMA_CTL_COUNT, 1) |
-                          _VAL2FLD(CY_DMA_CTL_SRC_INCR, 1);
-        writeDesr1.xCtl = _VAL2FLD(CY_DMA_CTL_COUNT, 1) |
-                          _VAL2FLD(CY_DMA_CTL_SRC_INCR, 1);
+        _udb_sdio_desr_write0.xCtl = _VAL2FLD(CY_DMA_CTL_COUNT, 1) |
+                                     _VAL2FLD(CY_DMA_CTL_SRC_INCR, 1);
+        _udb_sdio_desr_write1.xCtl = _VAL2FLD(CY_DMA_CTL_COUNT, 1) |
+                                     _VAL2FLD(CY_DMA_CTL_SRC_INCR, 1);
 
         if (dataSize <= 1024)
         {
             // Setup one descriptor
             // Y Increment is 2 because the X is transfer 2 data elements (which are 16 bits)
-            writeDesr0.yCtl = _VAL2FLD(CY_DMA_CTL_COUNT, (dataSize - 1) / 4) |
-                              _VAL2FLD(CY_DMA_CTL_SRC_INCR, 2);
+            _udb_sdio_desr_write0.yCtl = _VAL2FLD(CY_DMA_CTL_COUNT, (dataSize - 1) / 4) |
+                                         _VAL2FLD(CY_DMA_CTL_SRC_INCR, 2);
 
             // Setup descriptor 0 to point to nothing and disable
-            writeDesr0.nextPtr = 0;
-            writeDesr0.ctl    |= 0x01000000;
+            _udb_sdio_desr_write0.nextPtr = 0;
+            _udb_sdio_desr_write0.ctl    |= 0x01000000;
 
             // Disable Interrupt
+            #if defined(_CYHAL_DRIVER_AVAILABLE_IRQ) && (_CYHAL_DRIVER_AVAILABLE_IRQ)
+            _cyhal_irq_disable((_cyhal_system_irq_t)SDIO_HOST_Write_Int_INTC_NUMBER);
+            #else
             NVIC_DisableIRQ((IRQn_Type)SDIO_HOST_Write_Int_INTC_NUMBER);
+            #endif
         }
         else if (dataSize <= 2048)
         {
             // setup the first descriptor for 1024, then setup 2nd descriptor for remainder
 
-            writeDesr0.yCtl = _VAL2FLD(CY_DMA_CTL_COUNT, 255) |
-                              _VAL2FLD(CY_DMA_CTL_SRC_INCR, 2);
-            writeDesr1.yCtl = _VAL2FLD(CY_DMA_CTL_COUNT, (dataSize - 1025) / 4) |
-                              _VAL2FLD(CY_DMA_CTL_SRC_INCR, 2);
+            _udb_sdio_desr_write0.yCtl = _VAL2FLD(CY_DMA_CTL_COUNT, 255) |
+                                         _VAL2FLD(CY_DMA_CTL_SRC_INCR, 2);
+            _udb_sdio_desr_write1.yCtl = _VAL2FLD(CY_DMA_CTL_COUNT, (dataSize - 1025) / 4) |
+                                         _VAL2FLD(CY_DMA_CTL_SRC_INCR, 2);
 
 
             // Setup descriptor 0 to point to descriptor 1
-            writeDesr0.nextPtr = (uint32_t)(&writeDesr1);
+            _udb_sdio_desr_write0.nextPtr = (uint32_t)(&_udb_sdio_desr_write1);
             // Setup descriptor 1 to point to nothing and disable
-            writeDesr1.nextPtr = 0;
+            _udb_sdio_desr_write1.nextPtr = 0;
 
             // Don't disable after first descriptor
-            writeDesr0.ctl &= ~0x01000000;
+            _udb_sdio_desr_write0.ctl &= ~0x01000000;
             // Disable after second descriptor
-            writeDesr1.ctl |= 0x01000000;
+            _udb_sdio_desr_write1.ctl |= 0x01000000;
 
             // Disable Interrupt
+            #if defined(_CYHAL_DRIVER_AVAILABLE_IRQ) && (_CYHAL_DRIVER_AVAILABLE_IRQ)
+            _cyhal_irq_disable((_cyhal_system_irq_t)SDIO_HOST_Write_Int_INTC_NUMBER);
+            #else
             NVIC_DisableIRQ((IRQn_Type)SDIO_HOST_Write_Int_INTC_NUMBER);
+            #endif
         }
         else // dataSize must be greater than 2048
         {
             // These are for the ISR, Need to figure out how many "descriptors"
             // need to run, and the yCount for last descriptor.
             // Example: dataSize = 2080
-            // yCounts = 2, yCountRemainder = 7 (send 8 more set of 4)
-            yCounts = (dataSize / 1024);
+            // _udb_sdio_y_counts = 2, _udb_sdio_y_count_remainder = 7 (send 8 more set of 4)
+            _udb_sdio_y_counts = (dataSize / 1024);
 
             // the Ycount register is a +1 register meaning 0 = 1. I However, need to know when
             // there is no remainder so I increase the value to make sure there is a remainder and
             // decrement in the ISR
-            yCountRemainder = (((dataSize - (yCounts * 1024)) + 3) / 4);
+            _udb_sdio_y_count_remainder = (((dataSize - (_udb_sdio_y_counts * 1024)) + 3) / 4);
 
             // Setup the Y Ctrl for both descriptors
-            writeDesr0.yCtl = _VAL2FLD(CY_DMA_CTL_COUNT, 255) |
-                              _VAL2FLD(CY_DMA_CTL_SRC_INCR, 2);
-            writeDesr1.yCtl = _VAL2FLD(CY_DMA_CTL_COUNT, 255)  |
-                              _VAL2FLD(CY_DMA_CTL_SRC_INCR, 2);
+            _udb_sdio_desr_write0.yCtl = _VAL2FLD(CY_DMA_CTL_COUNT, 255) |
+                                         _VAL2FLD(CY_DMA_CTL_SRC_INCR, 2);
+            _udb_sdio_desr_write1.yCtl = _VAL2FLD(CY_DMA_CTL_COUNT, 255)  |
+                                         _VAL2FLD(CY_DMA_CTL_SRC_INCR, 2);
 
             // Setup descriptor 0 to point to descriptor 1
-            writeDesr0.nextPtr = (uint32_t)(&writeDesr1);
+            _udb_sdio_desr_write0.nextPtr = (uint32_t)(&_udb_sdio_desr_write1);
             // Setup descriptor 1 to point to descriptor 0
-            writeDesr1.nextPtr = (uint32_t)(&writeDesr0);
+            _udb_sdio_desr_write1.nextPtr = (uint32_t)(&_udb_sdio_desr_write0);
 
             // Don't disable the channel on completion of descriptor
-            writeDesr0.ctl &= ~0x01000000;
-            writeDesr1.ctl &= ~0x01000000;
+            _udb_sdio_desr_write0.ctl &= ~0x01000000;
+            _udb_sdio_desr_write1.ctl &= ~0x01000000;
 
-            // Decrement yCounts by 2 since we already have 2 descriptors setup
-            yCounts -= 2;
+            // Decrement _udb_sdio_y_counts by 2 since we already have 2 descriptors setup
+            _udb_sdio_y_counts -= 2;
 
             // Enable DMA interrupt
+            #if defined(_CYHAL_DRIVER_AVAILABLE_IRQ) && (_CYHAL_DRIVER_AVAILABLE_IRQ)
+            _cyhal_irq_enable((_cyhal_system_irq_t)SDIO_HOST_Write_Int_INTC_NUMBER);
+            #else
             NVIC_EnableIRQ((IRQn_Type)SDIO_HOST_Write_Int_INTC_NUMBER);
+            #endif
         }
 
         // Initialize the channel with the first descriptor
         Cy_DMA_Channel_SetDescriptor(SDIO_HOST_Write_DMA_HW, SDIO_HOST_Write_DMA_DW_CHANNEL,
-                                     &writeDesr0);
+                                     &_udb_sdio_desr_write0);
     }
 }
 
@@ -653,9 +800,9 @@ en_sdio_result_t SDIO_SendCommandAndWait(stc_sdio_cmd_t* pstcCmd)
     static uint8_t u8responseBuf[6];
 
     // Clear statuses
-    gstcInternalData.stcEvents.u8CmdComplete   = 0;
-    gstcInternalData.stcEvents.u8TransComplete = 0;
-    gstcInternalData.stcEvents.u8CRCError      = 0;
+    _udb_sdio_gstc_internal_data.stcEvents.u8CmdComplete   = 0;
+    _udb_sdio_gstc_internal_data.stcEvents.u8TransComplete = 0;
+    _udb_sdio_gstc_internal_data.stcEvents.u8CRCError      = 0;
 
     // Setup the command configuration
     stcCmdConfig.u8CmdIndex  = (uint8_t)pstcCmd->u32CmdIdx;
@@ -667,10 +814,10 @@ en_sdio_result_t SDIO_SendCommandAndWait(stc_sdio_cmd_t* pstcCmd)
 
     // Initialize the semaphore. This is not done in init because init is called * in interrupt
     // thread. cy_rtos_init_semaphore call is prohibited in * interrupt thread.
-    if (!sema_initialized)
+    if (!_udb_sdio_sema_initialized)
     {
-        cy_rtos_init_semaphore(&sdio_transfer_finished_semaphore, 1, 0);
-        sema_initialized = true;
+        cy_rtos_init_semaphore(&_udb_sdio_transfer_finished_semaphore, 1, 0);
+        _udb_sdio_sema_initialized = true;
     }
     #else // if defined(CY_RTOS_AWARE) || defined(COMPONENT_RTOS_AWARE)
 
@@ -806,17 +953,18 @@ en_sdio_result_t SDIO_SendCommandAndWait(stc_sdio_cmd_t* pstcCmd)
                             // Wait for the transfer to finish.
                             //  Acquire semaphore and wait until it will be released
                             //  in SDIO_IRQ:
-                            //  1. sdio_transfer_finished_semaphore count is equal to
+                            //  1. _udb_sdio_transfer_finished_semaphore count is equal to
                             //     zero. cy_rtos_get_semaphore waits until semaphore
                             //     count is increased by cy_rtos_set_semaphore() in
                             //     SDIO_IRQ.
                             //  2. The cy_rtos_set_semaphore() increases
-                            //     sdio_transfer_finished_semaphore count.
+                            //     _udb_sdio_transfer_finished_semaphore count.
                             //  3. The cy_rtos_get_semaphore() function decreases
-                            //     sdio_transfer_finished_semaphore back to zero
+                            //     _udb_sdio_transfer_finished_semaphore back to zero
                             //     and exit. Or timeout occurs
                             result =
-                                cy_rtos_get_semaphore(&sdio_transfer_finished_semaphore, 10, false);
+                                cy_rtos_get_semaphore(&_udb_sdio_transfer_finished_semaphore, 10,
+                                                      false);
 
                             enRetTmp = SDIO_CheckForEvent(SdCmdEventTransferDone);
 
@@ -900,38 +1048,46 @@ en_sdio_result_t SDIO_CheckForEvent(en_sdio_event_t enEventType)
     en_sdio_result_t enRet = Error;
 
     // Disable Interrupts while modifying the global
+    #if defined(_CYHAL_DRIVER_AVAILABLE_IRQ) && (_CYHAL_DRIVER_AVAILABLE_IRQ)
+    _cyhal_irq_disable((_cyhal_system_irq_t)SDIO_HOST_sdio_int__INTC_NUMBER);
+    #else
     NVIC_DisableIRQ((IRQn_Type)SDIO_HOST_sdio_int__INTC_NUMBER);
+    #endif
 
     // Switch the event to check
     switch (enEventType)
     {
         // If the command is done clear the flag
         case SdCmdEventCmdDone:
-            if (gstcInternalData.stcEvents.u8CmdComplete > 0)
+            if (_udb_sdio_gstc_internal_data.stcEvents.u8CmdComplete > 0)
             {
-                gstcInternalData.stcEvents.u8CmdComplete = 0;
+                _udb_sdio_gstc_internal_data.stcEvents.u8CmdComplete = 0;
                 enRet                                    = Ok;
             }
             break;
 
         // If the transfer is done check for CRC Error and clear the flag
         case SdCmdEventTransferDone:
-            if (gstcInternalData.stcEvents.u8TransComplete > 0)
+            if (_udb_sdio_gstc_internal_data.stcEvents.u8TransComplete > 0)
             {
-                gstcInternalData.stcEvents.u8TransComplete = 0;
+                _udb_sdio_gstc_internal_data.stcEvents.u8TransComplete = 0;
                 enRet                                      = Ok;
             }
             // Check for CRC error and set flags
-            if (gstcInternalData.stcEvents.u8CRCError > 0)
+            if (_udb_sdio_gstc_internal_data.stcEvents.u8CRCError > 0)
             {
                 enRet                                 = DataCrcError;
-                gstcInternalData.stcEvents.u8CRCError = 0;
+                _udb_sdio_gstc_internal_data.stcEvents.u8CRCError = 0;
             }
             break;
     }
 
     // Re-enable Interrupts
+    #if defined(_CYHAL_DRIVER_AVAILABLE_IRQ) && (_CYHAL_DRIVER_AVAILABLE_IRQ)
+    _cyhal_irq_enable((_cyhal_system_irq_t)SDIO_HOST_sdio_int__INTC_NUMBER);
+    #else
     NVIC_EnableIRQ((IRQn_Type)SDIO_HOST_sdio_int__INTC_NUMBER);
+    #endif
     return enRet;
 }
 
@@ -965,7 +1121,7 @@ uint8_t SDIO_CalculateCrc7(uint8_t* pu8Data, uint8_t u8Size)
     for (byte = 0; byte < u8Size; ++byte)
     {
         data      = pu8Data[byte] ^ remainder;
-        remainder = crcTable[data] ^ (remainder << 8);
+        remainder = _udb_sdio_crc_table[data] ^ (remainder << 8);
     }
 
     return (remainder>>1);
@@ -1005,7 +1161,7 @@ void SDIO_Crc7Init(void)
             }
         }
 
-        crcTable[dividend] = (remainder);
+        _udb_sdio_crc_table[dividend] = (remainder);
     }
 }
 
@@ -1145,20 +1301,21 @@ void SDIO_SetupDMA(void)
     SDIO_HOST_CMD_DMA_CMD_DMA_Desc_config.dstAddress = (void*)SDIO_CMD_COMMAND_PTR;
 
     // Initialize descriptor for cmd channel
-    Cy_DMA_Descriptor_Init(&cmdDesr, &SDIO_HOST_CMD_DMA_CMD_DMA_Desc_config);
+    Cy_DMA_Descriptor_Init(&_udb_sdio_desr_cmd, &SDIO_HOST_CMD_DMA_CMD_DMA_Desc_config);
 
     // Set flag to disable descriptor when done
-    cmdDesr.ctl |= 0x01000000;
+    _udb_sdio_desr_cmd.ctl |= 0x01000000;
 
     // Configure channel
     // CMD channel can be preempted, and has lower priority
-    cmdChannelConfig.descriptor  = &cmdDesr;
-    cmdChannelConfig.preemptable = 1;
-    cmdChannelConfig.priority    = 1;
-    cmdChannelConfig.enable      = 0u;
+    _udb_sdio_channel_config_cmd.descriptor  = &_udb_sdio_desr_cmd;
+    _udb_sdio_channel_config_cmd.preemptable = 1;
+    _udb_sdio_channel_config_cmd.priority    = 1;
+    _udb_sdio_channel_config_cmd.enable      = 0u;
 
     // Configure Channel with initial Settings
-    Cy_DMA_Channel_Init(SDIO_HOST_CMD_DMA_HW, SDIO_HOST_CMD_DMA_DW_CHANNEL, &cmdChannelConfig);
+    Cy_DMA_Channel_Init(SDIO_HOST_CMD_DMA_HW, SDIO_HOST_CMD_DMA_DW_CHANNEL,
+                        &_udb_sdio_channel_config_cmd);
 
     // Enable DMA block
     Cy_DMA_Enable(SDIO_HOST_CMD_DMA_HW);
@@ -1169,20 +1326,21 @@ void SDIO_SetupDMA(void)
     SDIO_HOST_Resp_DMA_Resp_DMA_Desc_config.srcAddress = (void*)SDIO_CMD_RESPONSE_PTR;
 
     // Initialize descriptor for response channel
-    Cy_DMA_Descriptor_Init(&respDesr, &SDIO_HOST_Resp_DMA_Resp_DMA_Desc_config);
+    Cy_DMA_Descriptor_Init(&_udb_sdio_desr_resp, &SDIO_HOST_Resp_DMA_Resp_DMA_Desc_config);
 
     // Set flag to disable descriptor when done
-    respDesr.ctl |= 0x01000000;
+    _udb_sdio_desr_resp.ctl |= 0x01000000;
 
     // Configure channel
     // response channel can be preempted, and has lower priority
-    respChannelConfig.descriptor  = &respDesr;
-    respChannelConfig.preemptable = 1;
-    respChannelConfig.priority    = 1;
-    respChannelConfig.enable      = 0u;
+    _udb_sdio_channel_config_resp.descriptor  = &_udb_sdio_desr_resp;
+    _udb_sdio_channel_config_resp.preemptable = 1;
+    _udb_sdio_channel_config_resp.priority    = 1;
+    _udb_sdio_channel_config_resp.enable      = 0u;
 
     // Configure Channel with initial Settings
-    Cy_DMA_Channel_Init(SDIO_HOST_Resp_DMA_HW, SDIO_HOST_Resp_DMA_DW_CHANNEL, &respChannelConfig);
+    Cy_DMA_Channel_Init(SDIO_HOST_Resp_DMA_HW, SDIO_HOST_Resp_DMA_DW_CHANNEL,
+                        &_udb_sdio_channel_config_resp);
     // Enable DMA block
     Cy_DMA_Enable(SDIO_HOST_Resp_DMA_HW);
 
@@ -1190,19 +1348,19 @@ void SDIO_SetupDMA(void)
     SDIO_HOST_Write_DMA_Write_DMA_Desc_config.dstAddress = (void*)SDIO_DAT_WRITE_PTR;
 
     // Initialize descriptor for write channel
-    Cy_DMA_Descriptor_Init(&writeDesr0, &SDIO_HOST_Write_DMA_Write_DMA_Desc_config);
-    Cy_DMA_Descriptor_Init(&writeDesr1, &SDIO_HOST_Write_DMA_Write_DMA_Desc_config);
+    Cy_DMA_Descriptor_Init(&_udb_sdio_desr_write0, &SDIO_HOST_Write_DMA_Write_DMA_Desc_config);
+    Cy_DMA_Descriptor_Init(&_udb_sdio_desr_write1, &SDIO_HOST_Write_DMA_Write_DMA_Desc_config);
 
     // Configure channel
     // write channel cannot be preempted, and has highest priority
-    writeChannelConfig.descriptor  = &writeDesr0;
-    writeChannelConfig.preemptable = 0;
-    writeChannelConfig.priority    = 0;
-    writeChannelConfig.enable      = 0u;
+    _udb_sdio_channel_config_write.descriptor  = &_udb_sdio_desr_write0;
+    _udb_sdio_channel_config_write.preemptable = 0;
+    _udb_sdio_channel_config_write.priority    = 0;
+    _udb_sdio_channel_config_write.enable      = 0u;
 
     // Configure Channel with initial Settings
     Cy_DMA_Channel_Init(SDIO_HOST_Write_DMA_HW, SDIO_HOST_Write_DMA_DW_CHANNEL,
-                        &writeChannelConfig);
+                        &_udb_sdio_channel_config_write);
 
     // Enable the interrupt
     Cy_DMA_Channel_SetInterruptMask(SDIO_HOST_Write_DMA_HW, SDIO_HOST_Write_DMA_DW_CHANNEL,
@@ -1214,18 +1372,19 @@ void SDIO_SetupDMA(void)
     // Set the source address
     SDIO_HOST_Read_DMA_Read_DMA_Desc_config.srcAddress = (void*)SDIO_DAT_READ_PTR;
     // Initialize descriptor for read channel
-    Cy_DMA_Descriptor_Init(&readDesr0, &SDIO_HOST_Read_DMA_Read_DMA_Desc_config);
-    Cy_DMA_Descriptor_Init(&readDesr1, &SDIO_HOST_Read_DMA_Read_DMA_Desc_config);
+    Cy_DMA_Descriptor_Init(&_udb_sdio_desr_read0, &SDIO_HOST_Read_DMA_Read_DMA_Desc_config);
+    Cy_DMA_Descriptor_Init(&_udb_sdio_desr_read1, &SDIO_HOST_Read_DMA_Read_DMA_Desc_config);
 
     // Configure channel
     // read channel cannot be preempted, and has highest priority
-    readChannelConfig.descriptor  = &readDesr0;
-    readChannelConfig.preemptable = 0;
-    readChannelConfig.priority    = 0;
-    readChannelConfig.enable      = 0u;
+    _udb_sdio_channel_config_read.descriptor  = &_udb_sdio_desr_read0;
+    _udb_sdio_channel_config_read.preemptable = 0;
+    _udb_sdio_channel_config_read.priority    = 0;
+    _udb_sdio_channel_config_read.enable      = 0u;
 
     // Configure Channel with initial Settings
-    Cy_DMA_Channel_Init(SDIO_HOST_Read_DMA_HW, SDIO_HOST_Read_DMA_DW_CHANNEL, &readChannelConfig);
+    Cy_DMA_Channel_Init(SDIO_HOST_Read_DMA_HW, SDIO_HOST_Read_DMA_DW_CHANNEL,
+                        &_udb_sdio_channel_config_read);
 
     // Enable the interrupt
     Cy_DMA_Channel_SetInterruptMask(SDIO_HOST_Read_DMA_HW, SDIO_HOST_Read_DMA_DW_CHANNEL,
@@ -1293,23 +1452,23 @@ void SDIO_IRQ(void)
     // Check card interrupt
     if (u8Status & SDIO_STS_CARD_INT)
     {
-        pfnCardInt_count++;
+        _udb_sdio_pfn_card_int_count++;
     }
 
     // Execute card interrupt callback if neccesary
-    if (0 != pfnCardInt_count)
+    if (0 != _udb_sdio_pfn_card_int_count)
     {
-        if (NULL != gstcInternalData.pstcCallBacks.pfnCardIntCb)
+        if (NULL != _udb_sdio_gstc_internal_data.pstcCallBacks.pfnCardIntCb)
         {
-            gstcInternalData.pstcCallBacks.pfnCardIntCb();
+            _udb_sdio_gstc_internal_data.pstcCallBacks.pfnCardIntCb();
         }
-        pfnCardInt_count--;
+        _udb_sdio_pfn_card_int_count--;
     }
 
     // If the command is complete set the flag
     if (u8Status & SDIO_STS_CMD_DONE)
     {
-        gstcInternalData.stcEvents.u8CmdComplete++;
+        _udb_sdio_gstc_internal_data.stcEvents.u8CmdComplete++;
     }
 
     // Check if a write is complete
@@ -1322,15 +1481,15 @@ void SDIO_IRQ(void)
         if (u8Status & SDIO_STS_CRC_ERR)
         {
             // CRC was bad, set the flag
-            gstcInternalData.stcEvents.u8CRCError++;
+            _udb_sdio_gstc_internal_data.stcEvents.u8CRCError++;
         }
 
         // Set the done flag
 
         #if defined(CY_RTOS_AWARE) || defined(COMPONENT_RTOS_AWARE)
-        cy_rtos_set_semaphore(&sdio_transfer_finished_semaphore, true);
+        cy_rtos_set_semaphore(&_udb_sdio_transfer_finished_semaphore, true);
         #else
-        gstcInternalData.stcEvents.u8TransComplete++;
+        _udb_sdio_gstc_internal_data.stcEvents.u8TransComplete++;
         #endif
     }
 
@@ -1344,17 +1503,21 @@ void SDIO_IRQ(void)
         if (u8Status & SDIO_STS_CRC_ERR)
         {
             // CRC was bad, set the flag
-            gstcInternalData.stcEvents.u8CRCError++;
+            _udb_sdio_gstc_internal_data.stcEvents.u8CRCError++;
         }
         // Okay we're done so set the done flag
         #if defined(CY_RTOS_AWARE) || defined(COMPONENT_RTOS_AWARE)
-        cy_rtos_set_semaphore(&sdio_transfer_finished_semaphore, true);
+        cy_rtos_set_semaphore(&_udb_sdio_transfer_finished_semaphore, true);
         #else
-        gstcInternalData.stcEvents.u8TransComplete++;
+        _udb_sdio_gstc_internal_data.stcEvents.u8TransComplete++;
         #endif
     }
 
+    #if defined(_CYHAL_DRIVER_AVAILABLE_IRQ) && (_CYHAL_DRIVER_AVAILABLE_IRQ)
+    _cyhal_irq_clear_pending((_cyhal_system_irq_t)SDIO_HOST_sdio_int__INTC_NUMBER);
+    #else
     NVIC_ClearPendingIRQ((IRQn_Type)SDIO_HOST_sdio_int__INTC_NUMBER);
+    #endif
 }
 
 
@@ -1372,62 +1535,80 @@ void SDIO_READ_DMA_IRQ(void)
 
     // If the current descriptor is 0, then change descriptor 1
     if (Cy_DMA_Channel_GetCurrentDescriptor(SDIO_HOST_Read_DMA_HW,
-                                            SDIO_HOST_Read_DMA_DW_CHANNEL) == &readDesr0)
+                                            SDIO_HOST_Read_DMA_DW_CHANNEL) == &_udb_sdio_desr_read0)
     {
         // We need to increment the destination address every time
-        readDesr1.dst += 2048;
+        _udb_sdio_desr_read1.dst += 2048;
 
         // If this is the last descriptor
-        if ((yCounts == 1) && (yCountRemainder == 0))
+        if ((_udb_sdio_y_counts == 1) && (_udb_sdio_y_count_remainder == 0))
         {
             // In this case all we need to change is the next descriptor and disable
-            readDesr1.nextPtr = 0;
-            readDesr1.ctl    |= 0x01000000;
+            _udb_sdio_desr_read1.nextPtr = 0;
+            _udb_sdio_desr_read1.ctl    |= 0x01000000;
+            #if defined(_CYHAL_DRIVER_AVAILABLE_IRQ) && (_CYHAL_DRIVER_AVAILABLE_IRQ)
+            _cyhal_irq_disable((_cyhal_system_irq_t)SDIO_HOST_Read_Int_INTC_NUMBER);
+            #else
             NVIC_DisableIRQ((IRQn_Type)SDIO_HOST_Read_Int_INTC_NUMBER);
+            #endif
         }
-        else if ((yCounts == 0) && (yCountRemainder > 0))
+        else if ((_udb_sdio_y_counts == 0) && (_udb_sdio_y_count_remainder > 0))
         {
             // change next descriptor, and disable
-            readDesr1.nextPtr = 0;
-            readDesr1.ctl    |= 0x01000000;
+            _udb_sdio_desr_read1.nextPtr = 0;
+            _udb_sdio_desr_read1.ctl    |= 0x01000000;
             // Also change the yCount
-            readDesr1.yCtl = _VAL2FLD(CY_DMA_CTL_COUNT, (yCountRemainder-1)) |
-                             _VAL2FLD(CY_DMA_CTL_DST_INCR, 2);
+            _udb_sdio_desr_read1.yCtl =
+                _VAL2FLD(CY_DMA_CTL_COUNT, (_udb_sdio_y_count_remainder-1)) |
+                _VAL2FLD(CY_DMA_CTL_DST_INCR, 2);
+            #if defined(_CYHAL_DRIVER_AVAILABLE_IRQ) && (_CYHAL_DRIVER_AVAILABLE_IRQ)
+            _cyhal_irq_disable((_cyhal_system_irq_t)SDIO_HOST_Read_Int_INTC_NUMBER);
+            #else
             NVIC_DisableIRQ((IRQn_Type)SDIO_HOST_Read_Int_INTC_NUMBER);
+            #endif
         }
     }
 
     // If the current descriptor is 1, then change descriptor 0
     if (Cy_DMA_Channel_GetCurrentDescriptor(SDIO_HOST_Read_DMA_HW,
-                                            SDIO_HOST_Read_DMA_DW_CHANNEL) == &readDesr1)
+                                            SDIO_HOST_Read_DMA_DW_CHANNEL) == &_udb_sdio_desr_read1)
     {
         // We need to increment the destination address everytime
-        readDesr0.dst += 2048;
+        _udb_sdio_desr_read0.dst += 2048;
 
         // If this is the last descriptor
-        if ((yCounts == 1) && (yCountRemainder == 0))
+        if ((_udb_sdio_y_counts == 1) && (_udb_sdio_y_count_remainder == 0))
         {
             // In this case all we need to change is the next descriptor and disable
-            readDesr0.nextPtr = 0;
-            readDesr0.ctl    |= 0x01000000;
+            _udb_sdio_desr_read0.nextPtr = 0;
+            _udb_sdio_desr_read0.ctl    |= 0x01000000;
+            #if defined(_CYHAL_DRIVER_AVAILABLE_IRQ) && (_CYHAL_DRIVER_AVAILABLE_IRQ)
+            _cyhal_irq_disable((_cyhal_system_irq_t)SDIO_HOST_Read_Int_INTC_NUMBER);
+            #else
             NVIC_DisableIRQ((IRQn_Type)SDIO_HOST_Read_Int_INTC_NUMBER);
+            #endif
         }
-        else if ((yCounts == 0) && (yCountRemainder > 0))
+        else if ((_udb_sdio_y_counts == 0) && (_udb_sdio_y_count_remainder > 0))
         {
             // change next descriptor, and disable
-            readDesr0.nextPtr = 0;
-            readDesr0.ctl    |= 0x01000000;
+            _udb_sdio_desr_read0.nextPtr = 0;
+            _udb_sdio_desr_read0.ctl    |= 0x01000000;
             // Also change the yCount
-            readDesr0.yCtl = _VAL2FLD(CY_DMA_CTL_COUNT, (yCountRemainder-1)) |
-                             _VAL2FLD(CY_DMA_CTL_DST_INCR, 2);
+            _udb_sdio_desr_read0.yCtl =
+                _VAL2FLD(CY_DMA_CTL_COUNT, (_udb_sdio_y_count_remainder-1)) |
+                _VAL2FLD(CY_DMA_CTL_DST_INCR, 2);
+            #if defined(_CYHAL_DRIVER_AVAILABLE_IRQ) && (_CYHAL_DRIVER_AVAILABLE_IRQ)
+            _cyhal_irq_disable((_cyhal_system_irq_t)SDIO_HOST_Read_Int_INTC_NUMBER);
+            #else
             NVIC_DisableIRQ((IRQn_Type)SDIO_HOST_Read_Int_INTC_NUMBER);
+            #endif
         }
     }
 
     // Clear the interrupt
     Cy_DMA_Channel_ClearInterrupt(SDIO_HOST_Read_DMA_HW, SDIO_HOST_Read_DMA_DW_CHANNEL);
     // decrement y counts
-    yCounts--;
+    _udb_sdio_y_counts--;
 }
 
 
@@ -1445,60 +1626,80 @@ void SDIO_WRITE_DMA_IRQ(void)
 
     // If the current descriptor is 0, then change descriptor 1
     if (Cy_DMA_Channel_GetCurrentDescriptor(SDIO_HOST_Write_DMA_HW,
-                                            SDIO_HOST_Write_DMA_DW_CHANNEL) == &writeDesr0)
+                                            SDIO_HOST_Write_DMA_DW_CHANNEL) ==
+        &_udb_sdio_desr_write0)
     {
         // We also need to increment the destination address every-time
-        writeDesr1.src += 2048;
+        _udb_sdio_desr_write1.src += 2048;
 
         // If this is the last descriptor
-        if ((yCounts == 1) && (yCountRemainder == 0))
+        if ((_udb_sdio_y_counts == 1) && (_udb_sdio_y_count_remainder == 0))
         {
             // In this case all we need to change is the next descriptor and disable
-            writeDesr1.nextPtr = 0;
-            writeDesr1.ctl    |= 0x01000000;
+            _udb_sdio_desr_write1.nextPtr = 0;
+            _udb_sdio_desr_write1.ctl    |= 0x01000000;
+            #if defined(_CYHAL_DRIVER_AVAILABLE_IRQ) && (_CYHAL_DRIVER_AVAILABLE_IRQ)
+            _cyhal_irq_disable((_cyhal_system_irq_t)SDIO_HOST_Write_Int_INTC_NUMBER);
+            #else
             NVIC_DisableIRQ((IRQn_Type)SDIO_HOST_Write_Int_INTC_NUMBER);
+            #endif
         }
-        else if ((yCounts == 0) && (yCountRemainder > 0))
+        else if ((_udb_sdio_y_counts == 0) && (_udb_sdio_y_count_remainder > 0))
         {
             // change next descriptor, and disable
-            writeDesr1.nextPtr = 0;
-            writeDesr1.ctl    |= 0x01000000;
+            _udb_sdio_desr_write1.nextPtr = 0;
+            _udb_sdio_desr_write1.ctl    |= 0x01000000;
             // Also change the yCount
-            writeDesr1.yCtl = _VAL2FLD(CY_DMA_CTL_COUNT, (yCountRemainder -1)) |
-                              _VAL2FLD(CY_DMA_CTL_SRC_INCR, 2);
+            _udb_sdio_desr_write1.yCtl =
+                _VAL2FLD(CY_DMA_CTL_COUNT, (_udb_sdio_y_count_remainder -1)) |
+                _VAL2FLD(CY_DMA_CTL_SRC_INCR, 2);
+            #if defined(_CYHAL_DRIVER_AVAILABLE_IRQ) && (_CYHAL_DRIVER_AVAILABLE_IRQ)
+            _cyhal_irq_disable((_cyhal_system_irq_t)SDIO_HOST_Write_Int_INTC_NUMBER);
+            #else
             NVIC_DisableIRQ((IRQn_Type)SDIO_HOST_Write_Int_INTC_NUMBER);
+            #endif
         }
     }
 
     // If the current descriptor is 1, then change descriptor 0
     if (Cy_DMA_Channel_GetCurrentDescriptor(SDIO_HOST_Write_DMA_HW,
-                                            SDIO_HOST_Write_DMA_DW_CHANNEL) == &writeDesr1)
+                                            SDIO_HOST_Write_DMA_DW_CHANNEL) ==
+        &_udb_sdio_desr_write1)
     {
         // We also need to increment the destination address
-        writeDesr0.src += 2048;
+        _udb_sdio_desr_write0.src += 2048;
         // If this is the last descriptor
-        if ((yCounts == 1) && (yCountRemainder == 0))
+        if ((_udb_sdio_y_counts == 1) && (_udb_sdio_y_count_remainder == 0))
         {
             // In this case all we need to change is the next descriptor and disable
-            writeDesr0.nextPtr = 0;
-            writeDesr0.ctl    |= 0x01000000;
+            _udb_sdio_desr_write0.nextPtr = 0;
+            _udb_sdio_desr_write0.ctl    |= 0x01000000;
+            #if defined(_CYHAL_DRIVER_AVAILABLE_IRQ) && (_CYHAL_DRIVER_AVAILABLE_IRQ)
+            _cyhal_irq_disable((_cyhal_system_irq_t)SDIO_HOST_Write_Int_INTC_NUMBER);
+            #else
             NVIC_DisableIRQ((IRQn_Type)SDIO_HOST_Write_Int_INTC_NUMBER);
+            #endif
         }
-        else if ((yCounts == 0) && (yCountRemainder > 0))
+        else if ((_udb_sdio_y_counts == 0) && (_udb_sdio_y_count_remainder > 0))
         {
             // change next descriptor, and disable
-            writeDesr0.nextPtr = 0;
-            writeDesr0.ctl    |= 0x01000000;
+            _udb_sdio_desr_write0.nextPtr = 0;
+            _udb_sdio_desr_write0.ctl    |= 0x01000000;
             // Also change the yCount
-            writeDesr0.yCtl = _VAL2FLD(CY_DMA_CTL_COUNT, (yCountRemainder -1)) |
-                              _VAL2FLD(CY_DMA_CTL_SRC_INCR, 2);
+            _udb_sdio_desr_write0.yCtl =
+                _VAL2FLD(CY_DMA_CTL_COUNT, (_udb_sdio_y_count_remainder -1)) |
+                _VAL2FLD(CY_DMA_CTL_SRC_INCR, 2);
+            #if defined(_CYHAL_DRIVER_AVAILABLE_IRQ) && (_CYHAL_DRIVER_AVAILABLE_IRQ)
+            _cyhal_irq_disable((_cyhal_system_irq_t)SDIO_HOST_Write_Int_INTC_NUMBER);
+            #else
             NVIC_DisableIRQ((IRQn_Type)SDIO_HOST_Write_Int_INTC_NUMBER);
+            #endif
         }
     }
 
     // Clear the interrupt
     Cy_DMA_Channel_ClearInterrupt(SDIO_HOST_Write_DMA_HW, SDIO_HOST_Write_DMA_DW_CHANNEL);
-    yCounts--;
+    _udb_sdio_y_counts--;
 }
 
 
@@ -1511,8 +1712,13 @@ void SDIO_WRITE_DMA_IRQ(void)
  **************************************************************************************************/
 void SDIO_Free(void)
 {
+    SDIO_FreeResources();
     #if defined(CY_RTOS_AWARE) || defined(COMPONENT_RTOS_AWARE)
-    cy_rtos_deinit_semaphore(&sdio_transfer_finished_semaphore);
+    if (_udb_sdio_sema_initialized)
+    {
+        cy_rtos_deinit_semaphore(&_udb_sdio_transfer_finished_semaphore);
+        _udb_sdio_sema_initialized = false;
+    }
     #endif
 }
 
@@ -1527,10 +1733,10 @@ void SDIO_Free(void)
 *******************************************************************************/
 static void SDIO_SaveConfig(void)
 {
-    regs.CY_SDIO_UDB_WRKMULT_CTL_0 = UDB->WRKMULT.CTL[0];
-    regs.CY_SDIO_UDB_WRKMULT_CTL_1 = UDB->WRKMULT.CTL[1];
-    regs.CY_SDIO_UDB_WRKMULT_CTL_2 = UDB->WRKMULT.CTL[2];
-    regs.CY_SDIO_UDB_WRKMULT_CTL_3 = UDB->WRKMULT.CTL[3];
+    _udb_sdio_regs.CY_SDIO_UDB_WRKMULT_CTL_0 = UDB->WRKMULT.CTL[0];
+    _udb_sdio_regs.CY_SDIO_UDB_WRKMULT_CTL_1 = UDB->WRKMULT.CTL[1];
+    _udb_sdio_regs.CY_SDIO_UDB_WRKMULT_CTL_2 = UDB->WRKMULT.CTL[2];
+    _udb_sdio_regs.CY_SDIO_UDB_WRKMULT_CTL_3 = UDB->WRKMULT.CTL[3];
 }
 
 
@@ -1544,10 +1750,10 @@ static void SDIO_SaveConfig(void)
 *******************************************************************************/
 static void SDIO_RestoreConfig(void)
 {
-    UDB->WRKMULT.CTL[0] = regs.CY_SDIO_UDB_WRKMULT_CTL_0;
-    UDB->WRKMULT.CTL[1] = regs.CY_SDIO_UDB_WRKMULT_CTL_1;
-    UDB->WRKMULT.CTL[2] = regs.CY_SDIO_UDB_WRKMULT_CTL_2;
-    UDB->WRKMULT.CTL[3] = regs.CY_SDIO_UDB_WRKMULT_CTL_3;
+    UDB->WRKMULT.CTL[0] = _udb_sdio_regs.CY_SDIO_UDB_WRKMULT_CTL_0;
+    UDB->WRKMULT.CTL[1] = _udb_sdio_regs.CY_SDIO_UDB_WRKMULT_CTL_1;
+    UDB->WRKMULT.CTL[2] = _udb_sdio_regs.CY_SDIO_UDB_WRKMULT_CTL_2;
+    UDB->WRKMULT.CTL[3] = _udb_sdio_regs.CY_SDIO_UDB_WRKMULT_CTL_3;
 }
 
 

@@ -2,14 +2,14 @@
 
 ### Overview
 
-This library provides a UDB based SDIO interface that allows for communicating between a PSoC 6 and a wireless device such as the CYW4343W, CYW43438, or CYW43012. This library allows PSoC 6 devices that do not have a dedicated SDHC hardware block, but do have UDBs, to work with the [Wi-Fi Host Driver (WHD)](https://github.com/cypresssemiconductorco/wifi-host-driver) library.
+This library provides a UDB based SDIO interface that allows for communicating between a PSoC™ 6 and a wireless device such as the CYW4343W, CYW43438, or CYW43012. This library allows PSoC™ 6 devices that do not have a dedicated SDHC hardware block, but do have UDBs, to work with the [Wi-Fi Host Driver (WHD)](https://github.com/infineon/wifi-host-driver) library.
 
 **NOTE:** This library does not provide a complete SDIO implementation. It is only intended for use with a wireless device.
 
-**NOTE:** This library is only compatible with PSoC 6 Board Support Packages (BSPs) version 1.2.0 and later. Prior to this version, portions of this library were directly included as part of the BSP.
+**NOTE:** This library is only compatible with PSoC™ 6 Board Support Packages (BSPs) version 1.2.0 and later. Prior to this version, portions of this library were directly included as part of the BSP.
 
 ### Whats included
-There are three configurations of this library to choose from based on what PSoC 6 pins are intended for SDIO communication. Selection of which port to use is done by specifying the appropriate component to the makefile. Details for this are described in the Quick Start section below. The table below shows the supported ports and which pins on that port map to which SDIO function.
+There are three configurations of this library to choose from based on what PSoC™ 6 pins are intended for SDIO communication. Selection of which port to use is done by specifying the appropriate component to the makefile. Details for this are described in the Quick Start section below. The table below shows the supported ports and which pins on that port map to which SDIO function.
 
 | SDIO Function | Port 2 | Port 9 | Port 12 |
 | ------------- | ------ | ------ | ------- |
@@ -51,14 +51,14 @@ To use this library, the following must be true:
 
 ### More information
 
-* [API Reference Guide](https://cypresssemiconductorco.github.io/udb-sdio-whd/html/index.html)
+* [API Reference Guide](https://infineon.github.io/udb-sdio-whd/html/index.html)
 * [Cypress Semiconductor, an Infineon Technologies Company](http://www.cypress.com)
-* [Cypress Semiconductor GitHub](https://github.com/cypresssemiconductorco)
-* [ModusToolbox](https://www.cypress.com/products/modustoolbox-software-environment)
-* [Wi-Fi Host Driver](https://github.com/cypresssemiconductorco/wifi-host-driver)
-* [PSoC 6 Code Examples using ModusToolbox IDE](https://github.com/cypresssemiconductorco/Code-Examples-for-ModusToolbox-Software)
-* [PSoC 6 Middleware](https://github.com/cypresssemiconductorco/psoc6-middleware)
-* [PSoC 6 Resources - KBA223067](https://community.cypress.com/docs/DOC-14644)
+* [Infineon GitHub](https://github.com/infineon)
+* [ModusToolbox™](https://www.cypress.com/products/modustoolbox-software-environment)
+* [Wi-Fi Host Driver](https://github.com/infineon/wifi-host-driver)
+* [PSoC™ 6 Code Examples using ModusToolbox™ IDE](https://github.com/infineon/Code-Examples-for-ModusToolbox-Software)
+* [ModusToolbox™ Software](https://github.com/Infineon/modustoolbox-software)
+* [PSoC™ 6 Resources - KBA223067](https://community.cypress.com/docs/DOC-14644)
 
 ---
-© Cypress Semiconductor Corporation, 2019-2020.
+© Cypress Semiconductor Corporation (an Infineon company) or an affiliate of Cypress Semiconductor Corporation, 2019-2021.

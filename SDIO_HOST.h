@@ -7,7 +7,9 @@
  *
  ***************************************************************************************************
  * \copyright
- * Copyright 2016-2020 Cypress Semiconductor Corporation
+ * Copyright 2016-2022 Cypress Semiconductor Corporation (an Infineon company) or
+ * an affiliate of Cypress Semiconductor Corporation
+ *
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -251,6 +253,8 @@ typedef struct stc_sdio_cmd
  */
 
 // Main functions
+cy_rslt_t SDIO_ReserveResources();
+void SDIO_FreeResources();
 void SDIO_Init(stc_sdio_irq_cb_t* pfuCb);
 en_sdio_result_t SDIO_SendCommandAndWait(stc_sdio_cmd_t* pstcCmd);
 void SDIO_EnableIntClock(void);
