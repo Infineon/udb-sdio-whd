@@ -7,6 +7,8 @@ This library provides a UDB based SDIO interface that allows for communicating b
 * UDB based SDIO interface for WHD using Port 12
 
 ### What Changed?
+#### v1.2.1
+* Fix error when building for CM0P with a 2.X BSP and mtb-hal-cat1 v1.6.0 or older.
 #### v1.2.0
 * Updated how some SDIO resource reservations happen
 * Improve interrupt handling when running on CM0+ core

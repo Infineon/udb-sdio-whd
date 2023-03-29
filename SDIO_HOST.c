@@ -28,12 +28,12 @@
 #include "cy_utils.h"
 #include "cy_gpio.h"
 #include "cybsp.h"
+#if defined(CYHAL_UDB_SDIO)
 #include "cyhal.h"
 #if defined(_CYHAL_DRIVER_AVAILABLE_IRQ) && (_CYHAL_DRIVER_AVAILABLE_IRQ)
 #include "cyhal_irq_impl.h"
 #endif /* defined(_CYHAL_DRIVER_AVAILABLE_IRQ) && (_CYHAL_DRIVER_AVAILABLE_IRQ) */
 
-#if defined(CYHAL_UDB_SDIO)
 
 #if defined(__cplusplus)
 extern "C" {
